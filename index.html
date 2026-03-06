@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Indianclubx Event Manager</title>
+
+<style>
+body{
+font-family:Arial;
+background:#0f0f0f;
+color:white;
+padding:20px;
+font-size:18px;
+}
+
+h2,h3{
+color:#ff0066;
+font-size:28px;
+}
+
+input{
+padding:10px;
+margin:6px;
+border-radius:6px;
+border:none;
+width:200px;
+font-size:20px;
+}
+
+button{
+padding:12px 18px;
+margin:6px;
+background:#ff0066;
+color:white;
+border:none;
+border-radius:6px;
+cursor:pointer;
+font-size:20px;
+}
+
+.event{
+border:1px solid #333;
+padding:12px;
+margin-top:12px;
+font-size:20px;
+}
+
+.event img{
+max-width:100%;
+border-radius:6px;
+margin-bottom:10px;
+}
+
+.ticket{
+border:1px solid #444;
+padding:12px;
+margin-top:12px;
+font-size:20px;
+}
+
+.quick-btn{
+padding:6px 10px;
+margin-left:6px;
+background:#00ccff;
+color:#111;
+border-radius:6px;
+font-size:18px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Indianclubx Event Manager</h2>
+
+<div id="tokenDiv">
+<h3>Enter Eventbrite Token</h3>
+<input id="tokenInput" type="password" placeholder="Enter token">
+<button onclick="startSession()">Start Session</button>
+</div>
+
+<div id="app" style="display:none;">
+
+<h3>Search Event</h3>
+<input id="search" placeholder="Keyword: afro / heel / bollywood">
+<button onclick="searchEvents()">Search</button>
+
+<div id="events"></div>
+
+<hr>
+
+<h3>Ticket Classes</h3>
+
+<div>
+<b>Total Event Capacity:</b>
+
+<input id="eventCap" placeholder="Leave blank">
+
+<button onclick="updateEventCapacity()">Update Event Capacity</button>
+
+Quick:
+
+<button class="quick-btn" onclick="setEventCapacity(50)">50</button>
+<button class="quick-btn" onclick="setEventCapacity(70)">70</button>
+<button class="quick-btn" onclick="setEventCapacity(90)">90</button>
+
+</div>
+
+<div id="currentCap" style="margin-top:10px;font-size:20px;color:#00ccff;"></div>
+
+<div id="tickets"></div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+<script>
+
+let SESSION_KEY="eb_session"
+let sessionDuration=30*60*1000
+let tokenEncrypted=null
+let allEvents=[]
+let currentEventId=null
+
+const ORG_ID="1545139268353"
+
+function startSession(){
+
+let token=document.getElementById("tokenInput").value
+
+if(!token) return alert("Enter token")
+
+tokenEncrypted=CryptoJS.AES.encrypt(token,"IndianclubxSecretKey").toString()
+
+let sessionData={token:tokenEncrypted,start:Date.now()}
+
+sessionStorage.setItem(SESSION_KEY,JSON.stringify(sessionData))
+
+document.getElementById("tokenDiv").style.display="none"
+document.getElementById("app").style.display="block"
+
+loadAllEvents()
+
+}
+
+function getToken(){
+
+let data=JSON.parse(sessionStorage.getItem(SESSION_KEY))
+
+if(!data) return null
+
+if(Date.now()-data.start>sessionDuration){
+
+alert("Session expired")
+
+sessionStorage.removeItem(SESSION_KEY)
+
+location.reload()
+
+return null
+
+}
+
+let bytes=CryptoJS.AES.decrypt(data.token,"IndianclubxSecretKey")
+
+return bytes.toString(CryptoJS.enc.Utf8)
+
+}
+
+async function loadAllEvents(){
+
+let token=getToken()
+if(!token) return
+
+allEvents=[]
+
+let page=1
+
+while(true){
+
+let res=await fetch(`https://www.eventbriteapi.com/v3/organizations/${ORG_ID}/events/?status=live&page=${page}&page_size=200`,{
+
+headers:{Authorization:"Bearer "+token}
+
+})
+
+let data=await res.json()
+
+if(!data.events || data.events.length===0) break
+
+allEvents=allEvents.concat(data.events)
+
+if(!data.pagination.has_more_items) break
+
+page++
+
+}
+
+console.log("Live events loaded:",allEvents.length)
+
+}
+
+function searchEvents(){
+
+let keyword=document.getElementById("search").value.toLowerCase()
+
+let results=allEvents.filter(e=>e.name.text.toLowerCase().includes(keyword))
+
+let container=document.getElementById("events")
+
+container.innerHTML=""
+
+if(results.length===0){
+
+container.innerHTML="No live events found"
+
+return
+
+}
+
+results.forEach(e=>{
+
+let imgUrl=e.logo && e.logo.url ? e.logo.url : ""
+
+container.innerHTML+=`
+<div class="event">
+
+${imgUrl ? `<img src="${imgUrl}">` : ""}
+
+<b>${e.name.text}</b><br>
+
+Event ID: ${e.id}<br>
+
+<button onclick="loadTickets('${e.id}')">Manage Tickets</button>
+
+</div>
+`
+
+})
+
+}
+
+async function loadTickets(eventId){
+
+currentEventId=eventId
+
+let token=getToken()
+if(!token) return
+
+let res=await fetch(`https://www.eventbriteapi.com/v3/events/${eventId}/ticket_classes/`,{
+
+headers:{Authorization:"Bearer "+token}
+
+})
+
+let data=await res.json()
+
+let container=document.getElementById("tickets")
+
+container.innerHTML=""
+
+data.ticket_classes.forEach(t=>{
+
+let price=t.cost ? t.cost.value/100 : 0
+
+container.innerHTML+=`
+
+<div class="ticket">
+
+<b>${t.name}</b><br><br>
+
+Price $
+
+<input id="price_${t.id}" value="${price}">
+
+Capacity
+
+<input id="cap_${t.id}" value="${t.quantity_total}">
+
+Quick:
+
+<button class="quick-btn" onclick="changeTicketCapacity('${t.id}',10)">+10</button>
+
+<button class="quick-btn" onclick="changeTicketCapacity('${t.id}',-10)">-10</button>
+
+<br><br>
+
+<button onclick="updateTicket('${eventId}','${t.id}')">Update Ticket</button>
+
+</div>
+
+`
+
+})
+
+displayEventCapacity(eventId)
+
+}
+
+function changeTicketCapacity(ticketId,delta){
+
+let input=document.getElementById("cap_"+ticketId)
+
+let current=parseInt(input.value)||0
+
+current+=delta
+
+if(current<0) current=0
+
+input.value=current
+
+}
+
+async function updateTicket(eventId,ticketId){
+
+let token=getToken()
+if(!token) return
+
+let price=document.getElementById("price_"+ticketId).value*100
+
+let cap=document.getElementById("cap_"+ticketId).value
+
+let res=await fetch(`https://www.eventbriteapi.com/v3/events/${eventId}/ticket_classes/${ticketId}/`,{
+
+method:"POST",
+
+headers:{
+Authorization:"Bearer "+token,
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+ticket_class:{
+cost:`AUD,${price}`,
+quantity_total:cap
+}
+})
+
+})
+
+if(res.ok) alert("Ticket updated")
+
+else alert("Update failed")
+
+}
+
+async function displayEventCapacity(eventId){
+
+let token=getToken()
+if(!token) return
+
+let res=await fetch(`https://www.eventbriteapi.com/v3/events/${eventId}/`,{
+
+headers:{Authorization:"Bearer "+token}
+
+})
+
+let data=await res.json()
+
+document.getElementById("currentCap").innerHTML=
+"Current Total Capacity: "+(data.capacity || "N/A")
+
+}
+
+async function updateEventCapacity(){
+
+if(!currentEventId) return alert("Load event first")
+
+let newCap=document.getElementById("eventCap").value
+
+let token=getToken()
+if(!token) return
+
+let res=await fetch(`https://www.eventbriteapi.com/v3/events/${currentEventId}/`,{
+
+method:"POST",
+
+headers:{
+Authorization:"Bearer "+token,
+"Content-Type":"application/json"
+},
+
+body:JSON.stringify({
+event:{capacity:parseInt(newCap)}
+})
+
+})
+
+if(res.ok){
+
+alert("Event capacity updated")
+
+displayEventCapacity(currentEventId)
+
+}
+
+else alert("Update failed")
+
+}
+
+async function setEventCapacity(n){
+
+document.getElementById("eventCap").value=n
+
+updateEventCapacity()
+
+}
+
+</script>
+
+</body>
+</html>
